@@ -1,5 +1,5 @@
 --====================================================================================
--- All work by jojos38 & Titch2000.
+-- All work by jojos38 & Titch2000 & stefan750.
 -- You have no permission to edit, redistribute or upload. Contact BeamMP for more info!
 --====================================================================================
 -- Node sync related test functions
@@ -7,200 +7,162 @@
 
 local M = {}
 
+local abs = math.abs
+local min = math.min
+local max = math.max
+
 
 
 -- ============= VARIABLES =============
-local lastPos = vec3(0,0,0)
+local beamCache = {}
+local brokenBreakGroups = {}
+local receivedBeams = {}
 -- ============= VARIABLES =============
 
 
 
-local function distance( x1, y1, z1, x2, y2, z2 )
-	local dx = x1 - x2
-	local dy = y1 - y2
-	local dz = z1 - z2
-	return math.sqrt ( dx*dx + dy*dy + dz*dz)
+function round(num, numDecimalPlaces)
+	local mult = 10^(numDecimalPlaces or 0)
+	return math.floor(num * mult + 0.5) / mult
 end
 
 
 
-local function getNodes()
-
-  -- TODO: color
-  local save = {}
-  --save.nodeCount = #v.data.nodes
-  --save.beamCount = #v.data.beams
-  --save.luaState = serialize(serializePackages("save"))
-  --save.hydros = {}
-  --for _, h in pairs(hydros.hydros) do
-    --table.insert(save.hydros, h.state)
-  --end
-
-  save.nodes = {}
-  for _, node in pairs(v.data.nodes) do
-	local Pos = obj:getNodePosition(node.cid)
-	Pos.x = Round(Pos.x,3)
-	Pos.y = Round(Pos.y,3)
-	Pos.z = Round(Pos.z,3)
-    local d = {vec3(Pos):toTable()}
-
-    if math.abs(obj:getOriginalNodeMass(node.cid) - obj:getNodeMass(node.cid)) > 0.1 then
-      table.insert(d, obj:getNodeMass(node.cid))
-    end
-    save.nodes[node.cid + 1] = d
-  end
-
-  save.beams = {}
-  for _, beam in pairs(v.data.beams) do
-    local d = {
-      Round(obj:getBeamRestLength(beam.cid),3),
-      obj:beamIsBroken(beam.cid),
-      Round(obj:getBeamDeformation(beam.cid),3)
-    }
-    save.beams[beam.cid + 1] = d
-  end
-
-
-	--print("ok")
-	--local pos = obj:getPosition()
-	--local dist = distance(pos.x, pos.y, pos.z, lastPos.x, lastPos.y, lastPos.z)
-	--lastPos = pos
-	--if (dist > 0.02) then return end
-
-	--local save = {}
-  --save.nodeCount = #v.data.nodes
-  --save.beamCount = #v.data.beams
-
-  --[[save.hydros = {}
-  for _, h in pairs(hydros.hydros) do
-    table.insert(save.hydros, h.state)
-  end]]
-
-  --[[save.nodes = {}
-  for _, node in pairs(v.data.nodes) do
-    local d = {
-      vec3(obj:getNodePosition(node.cid)):toTable()
-    }
-    if math.abs(obj:getOriginalNodeMass(node.cid) - obj:getNodeMass(node.cid)) > 0.1 then
-      table.insert(d, obj:getNodeMass(node.cid))
-    end
-    save.nodes[node.cid + 1] = d
-  end]]
-
-  --[[save.beams = {}
-  for _, beam in pairs(v.data.beams) do
-    local d = {
-      obj:getBeamRestLength(beam.cid),
-      obj:beamIsBroken(beam.cid),
-      obj:getBeamDeformation(beam.cid)
-    }
-    save.beams[beam.cid + 1] = d
-  end]]
-
-	obj:queueGameEngineLua("nodesGE.sendNodes(\'"..jsonEncode(save).."\', "..obj:getID()..")") -- Send it to GE lua
+local function onInit()
+	beamCache = {}
+	local beamCount = 0
+	
+	for _, beam in pairs(v.data.beams) do
+		-- exclude BEAM_PRESSURED, BEAM_LBEAM, BEAM_HYDRO, BEAM_SUPPORT, and beams that can not deform or break
+		if beam.beamType ~= 3 and beam.beamType ~= 4 and beam.beamType ~= 6 and beam.beamType ~= 7
+		   and (beam.beamDeform < math.huge or beam.beamStrength < math.huge) then
+			beamCache[beam.cid] = {
+				broken = obj:beamIsBroken(beam.cid),
+				length = obj:getBeamRestLength(beam.cid),
+				breakGroup = beam.breakGroup
+			}
+			beamCount = beamCount+1
+		end
+	end
+	
+	brokenBreakGroups = {}
+	receivedBeams = {}
+	
+	--dump(beamCache)
+	print("Cached "..beamCount.." beams for vehicle "..obj:getID())
 end
 
 
 
-local function applyNodes(data)
+local function onReset()
+	-- Update cached beams on reset so we dont send everything again, other vehicle should receive reset event anyways
+	for cid, cachedBeam in pairs(beamCache) do
+		cachedBeam.broken = obj:beamIsBroken(cid)
+		cachedBeam.length = obj:getBeamRestLength(cid)
+	end
+	
+	brokenBreakGroups = {}
+	receivedBeams = {}
+	
+	print("Reset beam cache for vehicle "..obj:getID())
+end
 
-	--obj:requestReset(RESET_PHYSICS)
-	local save = jsonDecode(data)
 
-  print("Applied "..string.len(data).." bytes!")
-  --importPersistentData(save.luaState)
 
-  --[[for k, h in pairs(save.hydros) do
-    hydros.hydros[k].state = h
-  end]]
-
-  for cid, node in pairs(save.nodes) do
-    cid = tonumber(cid) - 1
-    obj:setNodePosition(cid, vec3(node[1]):toFloat3())
-    if #node > 1 then
-      obj:setNodeMass(cid, node[2])
-    end
-  end
-
-  for cid, beam in pairs(save.beams) do
-		cid = tonumber(cid) - 1
-		if beam[2] == true then
-			obj:breakBeam(cid)
-			beamstate.beamBroken(cid,1)
+local function getBeams()
+	--print("getBeams "..obj:getID())
+	local beams = {}
+	local send = false
+	local beamCount = 0
+	
+	for cid, cachedBeam in pairs(beamCache) do
+		local broken = obj:beamIsBroken(cid)
+		
+		if broken then
+			if broken ~= cachedBeam.broken and not brokenBreakGroups[cachedBeam.breakGroup] then
+				beams[cid] = -1
+				beamCount = beamCount+1
+				cachedBeam.broken = broken
+				send = true
+				
+				if cachedBeam.breakGroup then
+					brokenBreakGroups[cachedBeam.breakGroup] = true
+				end
+			end
 		else
-			obj:setBeamLength(cid, beam[1])
-			if beam[3] > 0 then
-			--print('deformed: ' .. tostring(cid) .. ' = ' .. tostring(beam[3]))
-			beamstate.beamDeformed(cid, beam[3])
+			local length = obj:getBeamRestLength(cid)
+			local diff = abs(length - cachedBeam.length)
+			
+			if diff > length*0.02 and diff > 0.01 then
+				beams[cid] = round(length, 3)
+				beamCount = beamCount+1
+				cachedBeam.length = length
+				send = true
 			end
 		end
-  end
-
-
-  --[[if not decodedData or decodedData.nodeCount ~= #v.data.nodes then --or decodedData.beamCount ~= #v.data.beams then
-    log("E", "nodesVE", "unable to use nodes data.")
-    return
-  end]]
-  print("Node Data Good, Attempting to apply...")
-  --[[for k, h in pairs(decodedData.hydros) do
-    hydros.hydros[k].state = h
-  end]]
-
-  --[[for cid, node in pairs(decodedData.nodes) do
-    cid = tonumber(cid) - 1
-    obj:setNodePosition(cid, vec3(node[1]):toFloat3())
-    if #node > 1 then
-      obj:setNodeMass(cid, node[2])
-    end
-  end]]
-
-  --[[for cid, beam in pairs(decodedData.beams) do
-    cid = tonumber(cid) - 1
-    obj:setBeamLength(cid, beam[1])
-    if beam[2] == true then
-      obj:breakBeam(cid)
-    end
-    if beam[3] > 0 then
-      -- deformation: do not call c++ at all, its just used on the lua side anyways
-      --print('deformed: ' .. tostring(cid) .. ' = ' .. tostring(beam[3]))
-      beamDeformed(cid, beam[3])
-    end
-  end]]
-
-	--[[for cid, node in pairs(decodedData.nodes) do
-		cid = tonumber(cid) - 1
-
-		local beam = v.data.beams[cid]
-		local beamPrecompression = beam.beamPrecompression or 1
-		local deformLimit = type(beam.deformLimit) == 'number' and beam.deformLimit or math.huge
-		obj:setBeam(-1, beam.id1, beam.id2, beam.beamStrength, beam.beamSpring,
-			beam.beamDamp, type(beam.dampCutoffHz) == 'number' and beam.dampCutoffHz or 0,
-			beam.beamDeform, deformLimit, type(beam.deformLimitExpansion) == 'number' and beam.deformLimitExpansion or deformLimit,
-			beamPrecompression
-		)
-		--print(dump(node))
-		obj:setNodePosition(cid, vec3(node[1]):toFloat3())
-		if #node > 1 then
-			obj:setNodeMass(cid, node[2])
+		
+		-- TODO: temporary packet size limit, remove once sorted on server side
+		if beamCount >= 100 then
+			obj:queueGameEngineLua("nodesGE.sendBeams(\'"..jsonEncode(beams).."\', "..obj:getID()..")") -- Send it to GE lua
+			print("Send "..beamCount.." beams "..obj:getID()..": "..jsonEncode(beams))
+			
+			beams = {}
+			send = false
+			beamCount = 0
 		end
-
-	end]]
-  print("Node Data Should be applied!")
+	end
+	
+	if send then
+		obj:queueGameEngineLua("nodesGE.sendBeams(\'"..jsonEncode(beams).."\', "..obj:getID()..")") -- Send it to GE lua
+		print("Send "..beamCount.." beams "..obj:getID()..": "..jsonEncode(beams))
+	end
 end
 
 
 
-local function round(num, numDecimalPlaces)
-  local mult = 10^(numDecimalPlaces or 0)
-  return math.floor(num * mult + 0.5) / mult
+local function applyBeams(data)
+	local beams = jsonDecode(data)
+
+	for cid, length in pairs(beams) do
+		if length < 0 then
+			if not obj:beamIsBroken(cid) then
+				obj:breakBeam(cid)
+				beamstate.beamBroken(cid,1)
+			end
+		else
+			receivedBeams[cid] = {
+				length = length,
+				rate = abs(length - obj:getBeamRestLength(cid))/1
+			}
+		end
+	end
 end
 
 
 
-M.distance   = distance
-M.applyNodes = applyNodes
-M.getNodes   = getNodes
+local function updateGFX(dt)
+	for cid, beam in pairs(receivedBeams) do
+		local currentLen = obj:getBeamRestLength(cid)
+		local dif = beam.length - currentLen
+		local rate = beam.rate*dt
+		
+		if abs(dif) > 0.01 then
+			local length = currentLen + min(max(dif, -rate), rate)
+			obj:setBeamLength(cid, length)
+		else
+			receivedBeams[cid] = nil
+		end
+	end
+end
 
+
+
+M.onInit             = onInit
+M.onExtensionLoaded  = onInit
+M.onReset            = onReset
+M.applyBeams         = applyBeams
+M.getBeams           = getBeams
+M.updateGFX          = updateGFX
 
 
 return M

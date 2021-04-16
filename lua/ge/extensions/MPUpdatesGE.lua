@@ -30,7 +30,7 @@ local powertrainTickrate = 1/10
 local function onPlayerConnect()
 	-- Update everything for the new connected player
 	MPElectricsGE.tick()
-	--nodesGE.tick()
+	nodesGE.tick()
 	positionGE.tick()
 	MPInputsGE.tick()
 	MPPowertrainGE.tick()
@@ -40,11 +40,11 @@ end
 
 local function onUpdate(dt)
 	if MPGameNetwork.connectionStatus() == 1 then -- If TCP connected
-		--nodesDelay = nodesDelay + dt
-		--if nodesDelay > getNodesTickrate() then
-		--	nodesDelay = 0 -- Reset the delay
-		--	nodesGE.tick() -- Comment this line to disable nodes synchronization
-		--end
+		nodesDelay = nodesDelay + dt
+		if nodesDelay > nodesTickrate then
+			nodesDelay = 0 -- Reset the delay
+			nodesGE.tick() -- Comment this line to disable nodes synchronization
+		end
 
 		positionDelay = positionDelay + dt
 		if positionDelay > positionTickrate then
