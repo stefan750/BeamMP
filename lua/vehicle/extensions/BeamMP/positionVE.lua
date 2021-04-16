@@ -16,7 +16,7 @@ local max = math.max
 
 
 -- =============================== SOME FUNCTIONS ===============================
--- Smoothing for vectors, original temporalSmoothingNonLinear created by BeamNG
+-- Exponential Smoothing for vectors, based on temporalSmoothingNonLinear by BeamNG
 local vectorSmoothing = {}
 vectorSmoothing.__index = vectorSmoothing
 
@@ -39,6 +39,34 @@ function vectorSmoothing:set(sample)
 end
 
 function vectorSmoothing:reset()
+  self.state = vec3(0,0,0)
+end
+
+-- Linear Smoothing for vectors
+local vectorSmoothingLinear = {}
+vectorSmoothingLinear.__index = vectorSmoothingLinear
+
+local function newVectorSmoothingLinear(rate)
+  local data = {rate = rate or 10, state = vec3(0,0,0)}
+  setmetatable(data, vectorSmoothingLinear)
+  return data
+end
+
+function vectorSmoothingLinear:get(sample, dt)
+  local st = self.state
+  local dif = sample - st
+  local length = dif:lengthGuarded()
+  local dir = dif/length
+  st = st + dir * min(self.rate * dt, length)
+  self.state = st
+  return st
+end
+
+function vectorSmoothingLinear:set(sample)
+  self.state = sample
+end
+
+function vectorSmoothingLinear:reset()
   self.state = vec3(0,0,0)
 end
 -- =============================== SOME FUNCTIONS ===============================
@@ -65,7 +93,7 @@ local tpDelayAdd = 1           -- Additional teleport delay (s)
 local tpDistAdd = 1            -- Additional teleport distance (m)
 local tpDistMul1 = 0.1         -- Multiplier for delayed teleport distance based on velocity (m per m/s)
 local tpDistMul2 = 0.5         -- Multiplier for instant teleport distance based on velocity (m per m/s)
-local tpRotAdd = 0.3           -- Additional teleport rotation (rad)
+local tpRotAdd = 0.5           -- Additional teleport rotation (rad)
 local tpRotMul1 = 0.2          -- Multiplier for delayed teleport rotation based on rotation velocity (rad per rad/s)
 local tpRotMul2 = 0.5          -- Multiplier for instant teleport rotation based on rotation velocity (rad per rad/s)
 local tpVelSmoother = newTemporalSmoothingNonLinear(2,50)  -- Smoother for filtering low velocities during collisions
@@ -78,10 +106,14 @@ local packetTimeout = 0.1      -- Stop prediction if no packet received within t
 -- Smoothing
 local localVelSmoother = newVectorSmoothing(50)             -- Smoother for local velocity
 local localRvelSmoother = newVectorSmoothing(50)            -- Smoother for local angular velocity
-local remoteVelSmoother = newVectorSmoothing(2)             -- Smoother for received velocity
-local remoteRvelSmoother = newVectorSmoothing(2)            -- Smoother for received angular velocity
-local remoteAccSmoother = newVectorSmoothing(1)             -- Smoother for acceleration calculated from received data
-local remoteRaccSmoother = newVectorSmoothing(1)            -- Smoother for angular acceleration calculated from received data
+local remoteVelSmoother = newVectorSmoothing(5)             -- Exponential smoother for received velocity
+local remoteRvelSmoother = newVectorSmoothing(3)            -- Exponential smoother for received angular velocity
+local remoteAccSmoother = newVectorSmoothing(5)             -- Exponential smoother for acceleration calculated from received data
+local remoteRaccSmoother = newVectorSmoothing(1)            -- Exponential smoother for angular acceleration calculated from received data
+local remoteVelSmootherLin = newVectorSmoothingLinear(20)   -- Linear smoother for received velocity
+local remoteRvelSmootherLin = newVectorSmoothingLinear(3)  -- Linear smoother for received angular velocity
+local remoteAccSmootherLin = newVectorSmoothingLinear(20)   -- Linear smoother for acceleration calculated from received data
+local remoteRaccSmootherLin = newVectorSmoothingLinear(1)  -- Linear smoother for angular acceleration calculated from received data
 local accErrorSmoother = newVectorSmoothing(50)             -- Smoother for acceleration error
 local raccErrorSmoother = newVectorSmoothing(50)            -- Smoother for angular acceleration error
 local timeOffsetSmoother = newTemporalSmoothingNonLinear(1) -- Smoother for getting average time offset
@@ -138,6 +170,10 @@ local function onReset()
 	remoteRvelSmoother:reset()
 	remoteAccSmoother:reset()
 	remoteRaccSmoother:reset()
+	remoteVelSmootherLin:reset()
+	remoteRvelSmootherLin:reset()
+	remoteAccSmootherLin:reset()
+	remoteRaccSmootherLin:reset()
 	accErrorSmoother:reset()
 	raccErrorSmoother:reset()
 	
@@ -166,9 +202,9 @@ local function updateGFX(dt)
 
 	-- Add physics update handler
 	if not physHandlerAdded and MPVehicleVE then
-        MPVehicleVE.AddPhysUpdateHandler('positionVE', M.update) --register to get phys updates
-        physHandlerAdded = true
-    end
+		MPVehicleVE.AddPhysUpdateHandler('positionVE', M.update) --register to get phys updates
+		physHandlerAdded = true
+	end
 
 	-- If there is no received data, or data is older than timeout, do nothing
 	if not remoteData.pos or (timer-remoteData.recTime) > packetTimeout then return end
@@ -201,10 +237,10 @@ local function updateGFX(dt)
 
 	-- More prediction = slower smoothing
 	local smootherDT = dt / guardZero(abs(predictTime))
-	local remoteVel = remoteVelSmoother:get(remoteData.vel, smootherDT)
-	local remoteRvel = remoteRvelSmoother:get(remoteData.rvel, smootherDT)
-	local remoteAcc = remoteAccSmoother:get(remoteData.acc, smootherDT)
-	local remoteRacc = remoteRaccSmoother:get(remoteData.racc, smootherDT)
+	local remoteVel = remoteVelSmoother:get(remoteVelSmootherLin:get(remoteData.vel, smootherDT), smootherDT)
+	local remoteRvel = remoteRvelSmoother:get(remoteRvelSmootherLin:get(remoteData.rvel, smootherDT), smootherDT)
+	local remoteAcc = remoteAccSmoother:get(remoteAccSmootherLin:get(remoteData.acc, smootherDT), smootherDT)
+	local remoteRacc = remoteRaccSmoother:get(remoteRaccSmootherLin:get(remoteData.racc, smootherDT), smootherDT)
 
 	-- Use received position, and smoothed velocity and acceleration to predict vehicle position
 	local pos = remoteData.pos + remoteVel*predictTime + 0.5*remoteAcc*predictTime*predictTime
