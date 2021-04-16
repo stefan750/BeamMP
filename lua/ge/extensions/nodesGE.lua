@@ -19,21 +19,18 @@ local function tick()
 		local veh = be:getObjectByID(i)
 		if veh then
 			--veh:queueLuaCommand("nodesVE.getNodes()")
-			veh:queueLuaCommand("nodesVE.getBreakGroups()")
+			--veh:queueLuaCommand("nodesVE.getBreakGroups()")
+			veh:queueLuaCommand("nodesVE.getBeams()")
 		end
 	end
 end
 
 
---- Wraps up node data from player own vehicles and sends it to the server.
--- INTERNAL USE
--- @param data table The node data from VE
--- @param gameVehicleID number The vehicle ID according to the local game
-local function sendNodes(data, gameVehicleID)
-	if MPGameNetwork.launcherConnected() then
-		local serverVehicleID = MPVehicleGE.getServerVehicleID(gameVehicleID)
-		if serverVehicleID and MPVehicleGE.isOwn(gameVehicleID) then
-			MPGameNetwork.send('Xn:'..serverVehicleID..":"..data)
+local function sendBeams(data, gameVehicleID) -- Update electrics values of all vehicles - The server check if the player own the vehicle itself
+	if MPGameNetwork.launcherConnected() then -- If TCP connected
+		local serverVehicleID = MPVehicleGE.getServerVehicleID(gameVehicleID) -- Get serverVehicleID
+		if serverVehicleID and MPVehicleGE.isOwn(gameVehicleID) then -- If serverVehicleID not null and player own vehicle
+			MPGameNetwork.send("Xn:"..serverVehicleID..":"..data)
 		end
 	end
 end
@@ -68,18 +65,6 @@ local function sendControllerData(data, gameVehicleID)
 end
 
 
---- This function serves to send the nodes data received for another players vehicle from GE to VE, where it is handled.
--- @param data table The data to be applied as nodes
--- @param serverVehicleID string The VehicleID according to the server.
-local function applyNodes(data, serverVehicleID)
-	local gameVehicleID = MPVehicleGE.getGameVehicleID(serverVehicleID) or -1
-	local veh = be:getObjectByID(gameVehicleID)
-	if veh then
-		veh:queueLuaCommand("nodesVE.applyNodes(mime.unb64(\'".. MPHelpers.b64encode(data) .."\'))")
-	end
-end
-
-
 --- This function serves to send the break groups data received for another players vehicle from GE to VE, where it is handled.
 -- @param data table The data to be applied as break groups
 -- @param serverVehicleID string The VehicleID according to the server.
@@ -88,6 +73,15 @@ local function applyBreakGroups(data, serverVehicleID)
 	local veh = be:getObjectByID(gameVehicleID)
 	if veh then
 		veh:queueLuaCommand("nodesVE.applyBreakGroups(mime.unb64(\'".. MPHelpers.b64encode(data) .."\'))")
+	end
+end
+
+
+local function applyBeams(data, serverVehicleID)
+	local gameVehicleID = MPVehicleGE.getGameVehicleID(serverVehicleID) or -1 -- get gameID
+	local veh = be:getObjectByID(gameVehicleID)
+	if veh then
+		veh:queueLuaCommand("nodesVE.applyBeams(\'"..data.."\')") -- Send nodes values
 	end
 end
 
@@ -104,7 +98,7 @@ local function handle(rawData)
 	end
 
 	if code == "n" then
-		applyNodes(data, serverVehicleID)
+		applyBeams(data, serverVehicleID)
 	elseif code == "g" then
 		applyBreakGroups(data, serverVehicleID)
 	elseif code == "c" then
@@ -118,10 +112,9 @@ end
 
 M.tick       = tick
 M.handle     = handle
-M.sendNodes  = sendNodes
-M.applyNodes = applyNodes
 M.onInit = function() setExtensionUnloadMode(M, "manual") end
-
+M.sendBeams  = sendBeams
+M.applyBeams = applyBeams
 M.sendBreakGroups  = sendBreakGroups
 M.sendControllerData  = sendControllerData
 
