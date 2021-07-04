@@ -20,7 +20,7 @@ local max = math.max
 local vectorSmoothingNonLinear = {}
 vectorSmoothingNonLinear.__index = vectorSmoothingNonLinear
 
-local function newvectorSmoothingNonLinear(rate)
+local function newVectorSmoothingNonLinear(rate)
   local data = {rate = rate or 10, state = vec3(0,0,0)}
   setmetatable(data, vectorSmoothingNonLinear)
   return data
@@ -46,7 +46,7 @@ end
 local vectorSmoothing = {}
 vectorSmoothing.__index = vectorSmoothing
 
-local function newvectorSmoothing(rate)
+local function newVectorSmoothing(rate)
   local data = {rate = rate or 10, state = vec3(0,0,0)}
   setmetatable(data, vectorSmoothing)
   return data
@@ -76,26 +76,26 @@ end
 -- ============= VARIABLES =============
 -- Position
 local posCorrectMul = 5        -- How much velocity to use for correcting position error (m/s per m)
-local posForceMul = 5          -- How much acceleration is used to correct velocity
+local posForceMul = 10         -- How much acceleration is used to correct velocity
 local minPosForce = 0.07       -- If force is smaller than this, ignore to save performance
 local maxAcc = 500             -- Maximum acceleration (m/s^2)
-local maxAccError = 3          -- If difference between target and actual acceleration larger than this, decrease force
+local maxAccError = 50         -- If difference between target and actual acceleration larger than this, decrease force
 
 -- Rotation
-local rotCorrectMul = 7        -- How much velocity to use for correcting angle error (rad/s per rad)
-local rotForceMul = 7          -- How much acceleration is used to correct angular velocity
+local rotCorrectMul = 5        -- How much velocity to use for correcting angle error (rad/s per rad)
+local rotForceMul = 10         -- How much acceleration is used to correct angular velocity
 local minRotForce = 0.03       -- If force is smaller than this, ignore to save performance
 local maxRacc = 500            -- Maximum angular acceleration (rad/s^2)
-local maxRaccError = 3         -- If difference between target and actual angular acceleration larger than this, decrease force
+local maxRaccError = 50        -- If difference between target and actual angular acceleration larger than this, decrease force
 
 -- Teleport
 local tpDelayAdd = 1           -- Additional teleport delay (s)
 local tpDistAdd = 1            -- Additional teleport distance (m)
-local tpDistMul1 = 0.1         -- Multiplier for delayed teleport distance based on velocity (m per m/s)
+local tpDistMul1 = 0.3         -- Multiplier for delayed teleport distance based on velocity (m per m/s)
 local tpDistMul2 = 0.5         -- Multiplier for instant teleport distance based on velocity (m per m/s)
 local tpRotAdd = 0.5           -- Additional teleport rotation (rad)
-local tpRotMul1 = 0.2          -- Multiplier for delayed teleport rotation based on rotation velocity (rad per rad/s)
-local tpRotMul2 = 0.5          -- Multiplier for instant teleport rotation based on rotation velocity (rad per rad/s)
+local tpRotMul1 = 0.5          -- Multiplier for delayed teleport rotation based on rotation velocity (rad per rad/s)
+local tpRotMul2 = 1            -- Multiplier for instant teleport rotation based on rotation velocity (rad per rad/s)
 local tpVelSmoother = newTemporalSmoothingNonLinear(2,50)  -- Smoother for filtering low velocities during collisions
 local tpRvelSmoother = newTemporalSmoothingNonLinear(2,50) -- Smoother for filtering low rotation velocities during collisions
 
@@ -114,9 +114,9 @@ local remoteVelSmootherLin = newVectorSmoothing(20)           -- Linear smoother
 local remoteRvelSmootherLin = newVectorSmoothing(3)           -- Linear smoother for received angular velocity
 local remoteAccSmootherLin = newVectorSmoothing(20)           -- Linear smoother for acceleration calculated from received data
 local remoteRaccSmootherLin = newVectorSmoothing(1)           -- Linear smoother for angular acceleration calculated from received data
-local accErrorSmoother = newTemporalSmoothingNonLinear(2,50)  -- Smoother for acceleration error
-local raccErrorSmoother = newTemporalSmoothingNonLinear(2,50) -- Smoother for angular acceleration error
-local timeOffsetSmoother = newTemporalSmoothingNonLinear(1)   -- Smoother for getting average time offset
+local accErrorSmoother = newTemporalSmoothing(maxAccError/3,100)   -- Smoother for acceleration error
+local raccErrorSmoother = newTemporalSmoothing(maxRaccError/3,100) -- Smoother for angular acceleration error
+local timeOffsetSmoother = newTemporalSmoothingNonLinear(1)        -- Smoother for getting average time offset
 
 -- Persistent data
 local timer = 0
@@ -201,6 +201,7 @@ end
 local function updateGFX(dt)
 	realDt = obj:getRealdt()
 	timer = timer + realDt
+	local invDt = 1/guardZero(dt)
 
 	-- Add physics update handler
 	if not physHandlerAdded and MPVehicleVE then
@@ -214,12 +215,12 @@ local function updateGFX(dt)
 	-- Local vehicle data
 	local vehRot = quatFromDir(-vec3(obj:getDirectionVector()), vec3(obj:getDirectionVectorUp()))
 	local vehRvel = smoothRvel:rotated(vehRot)
-	local vehRacc = (vehRvel-(lastVehRvel or vehRvel))/dt
+	local vehRacc = (vehRvel-(lastVehRvel or vehRvel))*invDt
 	
 	local cog = velocityVE.cogRel:rotated(vehRot)
 	local vehPos = vec3(obj:getPosition()) + cog
 	local vehVel = smoothVel + cog:cross(vehRvel)
-	local vehAcc = (vehVel-(lastVehVel or vehVel))/dt
+	local vehAcc = (vehVel-(lastVehVel or vehVel))*invDt
 
 	lastVehVel = vehVel
 	lastVehRvel = vehRvel
@@ -328,15 +329,15 @@ local function updateGFX(dt)
 	end
 
 	local velError = vel - vehVel
-	local accErrorLen = accErrorSmoother:get(((lastAcc or vehAcc) - vehAcc):length(), smootherDT)
-	print("AccError: "..accErrorLen)
+	local accErrorLen = accErrorSmoother:getUncapped(min(((lastAcc or vehAcc) - vehAcc):length(), maxAccError), smootherDT)
+	--print("AccError: "..accErrorLen)
 
 	local rvelError = rvel - vehRvel
-	local raccErrorLen = raccErrorSmoother:get(((lastRacc or vehRacc) - vehRacc):length(), smootherDT)
-	print("RaccError: "..raccErrorLen)
+	local raccErrorLen = raccErrorSmoother:getUncapped(min(((lastRacc or vehRacc) - vehRacc):length(), maxRaccError), smootherDT)
+	--print("RaccError: "..raccErrorLen)
 
-	local targetAcc = (velError + posError*posCorrectMul)*min(posForceMul,1/guardZero(dt))
-	local targetRacc = (rvelError + rotError*rotCorrectMul)*min(rotForceMul,1/guardZero(dt))
+	local targetAcc = (velError + posError*posCorrectMul)*min(posForceMul,invDt)
+	local targetRacc = (rvelError + rotError*rotCorrectMul)*min(rotForceMul,invDt)
 
 	local targetAccMul = max(1-accErrorLen/maxAccError, 0)
 	--print("Force multiplier: "..targetAccMul)
@@ -345,6 +346,10 @@ local function updateGFX(dt)
 	local targetRaccMul = max(1-raccErrorLen/maxRaccError, 0)
 	--print("Rotation force multiplier: "..targetRaccMul)
 	targetRacc = targetRacc*targetRaccMul
+	
+	-- Debug for acceleration error
+	--debugDrawer:drawSphere(accErrorLen/10, vehPos:toFloat3(), color(0,0,255,50))
+	--debugDrawer:drawSphere(maxAccError/10, vehPos:toFloat3(), color(255,0,0,50))
 	
 	lastAcc = targetAcc
 	lastRacc = targetRacc
