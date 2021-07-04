@@ -17,16 +17,16 @@ local max = math.max
 
 -- =============================== SOME FUNCTIONS ===============================
 -- Exponential Smoothing for vectors, based on temporalSmoothingNonLinear by BeamNG
-local vectorSmoothing = {}
-vectorSmoothing.__index = vectorSmoothing
+local vectorSmoothingNonLinear = {}
+vectorSmoothingNonLinear.__index = vectorSmoothingNonLinear
 
-local function newVectorSmoothing(rate)
+local function newvectorSmoothingNonLinear(rate)
   local data = {rate = rate or 10, state = vec3(0,0,0)}
-  setmetatable(data, vectorSmoothing)
+  setmetatable(data, vectorSmoothingNonLinear)
   return data
 end
 
-function vectorSmoothing:get(sample, dt)
+function vectorSmoothingNonLinear:get(sample, dt)
   local st = self.state
   local dif = sample - st
   st = st + dif * min(self.rate * dt, 1)
@@ -34,25 +34,25 @@ function vectorSmoothing:get(sample, dt)
   return st
 end
 
-function vectorSmoothing:set(sample)
+function vectorSmoothingNonLinear:set(sample)
   self.state = sample
 end
 
-function vectorSmoothing:reset()
+function vectorSmoothingNonLinear:reset()
   self.state = vec3(0,0,0)
 end
 
 -- Linear Smoothing for vectors
-local vectorSmoothingLinear = {}
-vectorSmoothingLinear.__index = vectorSmoothingLinear
+local vectorSmoothing = {}
+vectorSmoothing.__index = vectorSmoothing
 
-local function newVectorSmoothingLinear(rate)
+local function newvectorSmoothing(rate)
   local data = {rate = rate or 10, state = vec3(0,0,0)}
-  setmetatable(data, vectorSmoothingLinear)
+  setmetatable(data, vectorSmoothing)
   return data
 end
 
-function vectorSmoothingLinear:get(sample, dt)
+function vectorSmoothing:get(sample, dt)
   local st = self.state
   local dif = sample - st
   local length = dif:lengthGuarded()
@@ -62,11 +62,11 @@ function vectorSmoothingLinear:get(sample, dt)
   return st
 end
 
-function vectorSmoothingLinear:set(sample)
+function vectorSmoothing:set(sample)
   self.state = sample
 end
 
-function vectorSmoothingLinear:reset()
+function vectorSmoothing:reset()
   self.state = vec3(0,0,0)
 end
 -- =============================== SOME FUNCTIONS ===============================
@@ -104,24 +104,24 @@ local maxPredict = 0.3         -- Maximum prediction limit (s)
 local packetTimeout = 0.1      -- Stop prediction if no packet received within this time (s)
 
 -- Smoothing
-local localVelSmoother = newVectorSmoothing(50)             -- Smoother for local velocity
-local localRvelSmoother = newVectorSmoothing(50)            -- Smoother for local angular velocity
-local remoteVelSmoother = newVectorSmoothing(5)             -- Exponential smoother for received velocity
-local remoteRvelSmoother = newVectorSmoothing(3)            -- Exponential smoother for received angular velocity
-local remoteAccSmoother = newVectorSmoothing(5)             -- Exponential smoother for acceleration calculated from received data
-local remoteRaccSmoother = newVectorSmoothing(1)            -- Exponential smoother for angular acceleration calculated from received data
-local remoteVelSmootherLin = newVectorSmoothingLinear(20)   -- Linear smoother for received velocity
-local remoteRvelSmootherLin = newVectorSmoothingLinear(3)  -- Linear smoother for received angular velocity
-local remoteAccSmootherLin = newVectorSmoothingLinear(20)   -- Linear smoother for acceleration calculated from received data
-local remoteRaccSmootherLin = newVectorSmoothingLinear(1)  -- Linear smoother for angular acceleration calculated from received data
-local accErrorSmoother = newVectorSmoothing(50)             -- Smoother for acceleration error
-local raccErrorSmoother = newVectorSmoothing(50)            -- Smoother for angular acceleration error
-local timeOffsetSmoother = newTemporalSmoothingNonLinear(1) -- Smoother for getting average time offset
+local localVelSmoother = newVectorSmoothingNonLinear(50)      -- Smoother for local velocity
+local localRvelSmoother = newVectorSmoothingNonLinear(50)     -- Smoother for local angular velocity
+local remoteVelSmoother = newVectorSmoothingNonLinear(5)      -- Exponential smoother for received velocity
+local remoteRvelSmoother = newVectorSmoothingNonLinear(3)     -- Exponential smoother for received angular velocity
+local remoteAccSmoother = newVectorSmoothingNonLinear(5)      -- Exponential smoother for acceleration calculated from received data
+local remoteRaccSmoother = newVectorSmoothingNonLinear(1)     -- Exponential smoother for angular acceleration calculated from received data
+local remoteVelSmootherLin = newVectorSmoothing(20)           -- Linear smoother for received velocity
+local remoteRvelSmootherLin = newVectorSmoothing(3)           -- Linear smoother for received angular velocity
+local remoteAccSmootherLin = newVectorSmoothing(20)           -- Linear smoother for acceleration calculated from received data
+local remoteRaccSmootherLin = newVectorSmoothing(1)           -- Linear smoother for angular acceleration calculated from received data
+local accErrorSmoother = newTemporalSmoothingNonLinear(2,50)  -- Smoother for acceleration error
+local raccErrorSmoother = newTemporalSmoothingNonLinear(2,50) -- Smoother for angular acceleration error
+local timeOffsetSmoother = newTemporalSmoothingNonLinear(1)   -- Smoother for getting average time offset
 
 -- Persistent data
 local timer = 0
 local ownPing = 0
-local lastDT = 0
+local realDt = 0
 
 local lastVehVel = nil
 local lastVehRvel = nil
@@ -164,6 +164,8 @@ end
 
 local function onReset()
 	-- Reset smoothers and state variables
+	localVelSmoother:reset()
+	localRvelSmoother:reset()
 	tpVelSmoother:reset()
 	tpRvelSmoother:reset()
 	remoteVelSmoother:reset()
@@ -197,8 +199,8 @@ end
 
 
 local function updateGFX(dt)
-	timer = timer + dt
-	lastDT = dt
+	realDt = obj:getRealdt()
+	timer = timer + realDt
 
 	-- Add physics update handler
 	if not physHandlerAdded and MPVehicleVE then
@@ -212,12 +214,12 @@ local function updateGFX(dt)
 	-- Local vehicle data
 	local vehRot = quatFromDir(-vec3(obj:getDirectionVector()), vec3(obj:getDirectionVectorUp()))
 	local vehRvel = smoothRvel:rotated(vehRot)
-	local vehRacc = vehRvel-(lastVehRvel or vehRvel)
+	local vehRacc = (vehRvel-(lastVehRvel or vehRvel))/dt
 	
 	local cog = velocityVE.cogRel:rotated(vehRot)
 	local vehPos = vec3(obj:getPosition()) + cog
 	local vehVel = smoothVel + cog:cross(vehRvel)
-	local vehAcc = vehVel-(lastVehVel or vehVel)
+	local vehAcc = (vehVel-(lastVehVel or vehVel))/dt
 
 	lastVehVel = vehVel
 	lastVehRvel = vehRvel
@@ -313,7 +315,11 @@ local function updateGFX(dt)
 		remoteAccSmoother:reset()
 		remoteRaccSmoother:reset()
 
+		lastVehVel = nil
+		lastVehRvel = nil
+
 		lastAcc = nil
+		lastRacc = nil
 
 		accErrorSmoother:reset()
 		raccErrorSmoother:reset()
@@ -322,24 +328,30 @@ local function updateGFX(dt)
 	end
 
 	local velError = vel - vehVel
-	local accError = accErrorSmoother:get((lastAcc or vehAcc) - vehAcc, dt)
-	--print("AccError: "..tostring(accError:length()/dt))
+	local accErrorLen = accErrorSmoother:get(((lastAcc or vehAcc) - vehAcc):length(), smootherDT)
+	print("AccError: "..accErrorLen)
 
 	local rvelError = rvel - vehRvel
-	local raccError = raccErrorSmoother:get((lastRacc or vehRacc) - vehRacc, dt)
-	--print("RaccError: "..tostring(raccError:length()/dt))
+	local raccErrorLen = raccErrorSmoother:get(((lastRacc or vehRacc) - vehRacc):length(), smootherDT)
+	print("RaccError: "..raccErrorLen)
 
-	local targetAcc = (velError + posError*posCorrectMul)*min(posForceMul*dt,1)
-	local targetRacc = (rvelError + rotError*rotCorrectMul)*min(rotForceMul*dt,1)
+	local targetAcc = (velError + posError*posCorrectMul)*min(posForceMul,1/guardZero(dt))
+	local targetRacc = (rvelError + rotError*rotCorrectMul)*min(rotForceMul,1/guardZero(dt))
 
-	local targetAccMul = 1-min(max(targetAcc:dot(accError)/(targetAcc:squaredLength()+maxAccError*maxAccError*dt),0),1)
+	local targetAccMul = max(1-accErrorLen/maxAccError, 0)
 	--print("Force multiplier: "..targetAccMul)
 	targetAcc = targetAcc*targetAccMul
 
-	local targetRaccMul = 1-min(max(targetRacc:dot(raccError)/(targetRacc:squaredLength()+maxRaccError*maxRaccError*dt),0),1)
+	local targetRaccMul = max(1-raccErrorLen/maxRaccError, 0)
 	--print("Rotation force multiplier: "..targetRaccMul)
 	targetRacc = targetRacc*targetRaccMul
-
+	
+	lastAcc = targetAcc
+	lastRacc = targetRacc
+	
+	targetAcc = targetAcc*dt
+	targetRacc = targetRacc*dt
+	
 	--print("targetAcc: "..targetAcc:length())
 	--print("targetRacc: "..targetRacc:length())
 	if targetRacc:length() > minRotForce then
@@ -347,9 +359,6 @@ local function updateGFX(dt)
 	elseif targetAcc:length() > minPosForce then
 		velocityVE.addVelocity(targetAcc.x, targetAcc.y, targetAcc.z)
 	end
-
-	lastAcc = targetAcc
-	lastRacc = targetRacc
 end
 
 
@@ -369,7 +378,7 @@ local function getVehicleRotation()
 		rot = {rot.x, rot.y, rot.z, rot.w},
 		rvel = {rvel.x, rvel.y, rvel.z},
 		tim = timer,
-		ping = ownPing + lastDT
+		ping = ownPing + realDt
 	}
 	obj:queueGameEngineLua("positionGE.sendVehiclePosRot(\'"..jsonEncode(tempTable).."\', "..obj:getID()..")") -- Send it
 end
@@ -410,7 +419,7 @@ local function setVehiclePosRot(data)
 	remoteData.pos = pos
 	remoteData.rot = rot
 	remoteData.timer = tim
-	remoteData.timeOffset = timer-tim - ownPing/2 - ping/2 - lastDT
+	remoteData.timeOffset = timer-tim - ownPing/2 - ping/2 - realDt
 	remoteData.recTime = timer
 
 	--print("OwnPing = "..ownPing.." Ping = "..ping)
