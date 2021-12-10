@@ -11,7 +11,7 @@ print("Loading MPUpdatesGE...")
 
 
 local nodesDelay = 0
-local nodesTickrate = 1.0 -- in seconds
+local nodesTickrate = 1/4 -- in seconds
 
 local positionDelay = 0
 local positionTickrate = 0.020

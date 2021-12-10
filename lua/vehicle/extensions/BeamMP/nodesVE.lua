@@ -13,10 +13,19 @@ local max = math.max
 
 
 
+local damageThreshold = 1          -- How much the beamstate.damage value needs to change before syncing
+local beamDeformThreshold = 0.02   -- Relative length change after which a beam will be synced, 0.02 means length change by 2%
+local beamDeformMin = 0.01         -- Total length change after which a beam will be synced (m), 0.01 means length change by 1cm
+local beamApplyTime = 0.5          -- How quickly the damage will be applied (s), 1 means incoming damage will be interpolated over 1 second
+
+
+
 -- ============= VARIABLES =============
 local beamCache = {}
 local brokenBreakGroups = {}
-local receivedBeams = {}
+local beamsToUpdate = {}
+local updatingBeams = false
+local lastDamage = 0
 -- ============= VARIABLES =============
 
 
@@ -31,22 +40,20 @@ end
 local function onInit()
 	beamCache = {}
 	local beamCount = 0
-	
 	for _, beam in pairs(v.data.beams) do
 		-- exclude BEAM_PRESSURED, BEAM_LBEAM, BEAM_HYDRO, BEAM_SUPPORT, and beams that can not deform or break
 		if beam.beamType ~= 3 and beam.beamType ~= 4 and beam.beamType ~= 6 and beam.beamType ~= 7
 		   and (beam.beamDeform < math.huge or beam.beamStrength < math.huge) then
-			beamCache[beam.cid] = {
-				broken = obj:beamIsBroken(beam.cid),
-				length = obj:getBeamRestLength(beam.cid),
-				breakGroup = beam.breakGroup
-			}
+			beamCache[beam.cid] = obj:beamIsBroken(beam.cid) and -1 or obj:getBeamRestLength(beam.cid)*(beam.beamPrecompression or 1)
 			beamCount = beamCount+1
 		end
 	end
 	
 	brokenBreakGroups = {}
-	receivedBeams = {}
+	beamsToUpdate = {}
+	updatingBeams = false
+	
+	lastDamage = 0
 	
 	--dump(beamCache)
 	print("Cached "..beamCount.." beams for vehicle "..obj:getID())
@@ -56,13 +63,15 @@ end
 
 local function onReset()
 	-- Update cached beams on reset so we dont send everything again, other vehicle should receive reset event anyways
-	for cid, cachedBeam in pairs(beamCache) do
-		cachedBeam.broken = obj:beamIsBroken(cid)
-		cachedBeam.length = obj:getBeamRestLength(cid)
+	for cid, cachedLength in pairs(beamCache) do
+		beamCache[cid] = obj:beamIsBroken(cid) and -1 or obj:getBeamRestLength(cid)*(v.data.beams[cid].beamPrecompression or 1)
 	end
 	
 	brokenBreakGroups = {}
-	receivedBeams = {}
+	beamsToUpdate = {}
+	updatingBeams = false
+	
+	lastDamage = 0
 	
 	print("Reset beam cache for vehicle "..obj:getID())
 end
@@ -70,37 +79,45 @@ end
 
 
 local function getBeams()
+	if updatingBeams or (abs(beamstate.damage - lastDamage) < damageThreshold) then
+		return
+	end
+	
 	--print("getBeams "..obj:getID())
 	local beams = {}
 	local send = false
 	local beamCount = 0
 	
-	for cid, cachedBeam in pairs(beamCache) do
-		local broken = obj:beamIsBroken(cid)
-		
-		if broken then
-			if broken ~= cachedBeam.broken and not brokenBreakGroups[cachedBeam.breakGroup] then
-				beams[cid] = -1
-				beamCount = beamCount+1
-				cachedBeam.broken = broken
-				send = true
+	for cid, cachedLength in pairs(beamCache) do
+		-- skip already broken beams
+		if cachedLength >= 0 then
+			-- beam newly broken
+			if obj:beamIsBroken(cid) then
+				beamCache[cid] = -1
 				
-				if cachedBeam.breakGroup then
-					brokenBreakGroups[cachedBeam.breakGroup] = true
+				local breakGroup = v.data.beams[cid].breakGroup
+				if not breakGroup or not brokenBreakGroups[breakGroup] then
+					beams[cid] = -1
+					beamCount = beamCount+1
+					send = true
+					
+					if breakGroup then
+						brokenBreakGroups[breakGroup] = true
+					end
+				end
+			else -- check if beam changed length
+				local curLength = obj:getBeamRestLength(cid)
+				local diff = abs(curLength - cachedLength)
+				
+				if diff > curLength*beamDeformThreshold and diff > beamDeformMin then
+					beams[cid] = round(curLength, 4)
+					beamCount = beamCount+1
+					beamCache[cid] = curLength
+					send = true
 				end
 			end
-		else
-			local length = obj:getBeamRestLength(cid)
-			local diff = abs(length - cachedBeam.length)
-			
-			if diff > length*0.02 and diff > 0.01 then
-				beams[cid] = round(length, 3)
-				beamCount = beamCount+1
-				cachedBeam.length = length
-				send = true
-			end
 		end
-		
+		--[[
 		-- TODO: temporary packet size limit, remove once sorted on server side
 		if beamCount >= 100 then
 			obj:queueGameEngineLua("nodesGE.sendBeams(\'"..jsonEncode(beams).."\', "..obj:getID()..")") -- Send it to GE lua
@@ -110,12 +127,15 @@ local function getBeams()
 			send = false
 			beamCount = 0
 		end
+		--]]
 	end
 	
 	if send then
 		obj:queueGameEngineLua("nodesGE.sendBeams(\'"..jsonEncode(beams).."\', "..obj:getID()..")") -- Send it to GE lua
-		print("Send "..beamCount.." beams "..obj:getID()..": "..jsonEncode(beams))
+		print("Send "..beamCount.." beams "..obj:getID())--..": "..jsonEncode(beams))
 	end
+	
+	lastDamage = beamstate.damage
 end
 
 
@@ -123,34 +143,78 @@ end
 local function applyBeams(data)
 	local beams = jsonDecode(data)
 
-	for cid, length in pairs(beams) do
+	for cidStr, length in pairs(beams) do
+		-- JSON keys are always strings, so we need to convert it back to a number
+		local cid = tonumber(cidStr)
+		
 		if length < 0 then
 			if not obj:beamIsBroken(cid) then
 				obj:breakBeam(cid)
 				beamstate.beamBroken(cid,1)
 			end
 		else
-			receivedBeams[cid] = {
-				length = length,
-				rate = abs(length - obj:getBeamRestLength(cid))/1
+			local curLength = obj:getBeamRestLength(cid)
+		
+			beamsToUpdate[cid] = {
+				oldLength = curLength,
+				newLength = length,
+				progress = 0
+			}
+		end
+		
+		-- Do not add cids to the cache that we don't already have (breaks reset)
+		if beamCache[cid] > 0 then
+			beamCache[cid] = length
+		end
+	end
+	
+	print("Apply beams for vehicle "..obj:getID())
+end
+
+
+
+local function resyncBeams()
+	if updatingBeams or (abs(beamstate.damage - lastDamage) < damageThreshold) then
+		return
+	end
+	
+	for cid, cachedLength in pairs(beamCache) do
+		local curLength = obj:getBeamRestLength(cid)
+		local diff = abs(cachedLength - curLength)
+		
+		if cachedLength < 0 then
+			if not obj:beamIsBroken(cid) then
+				obj:breakBeam(cid)
+				beamstate.beamBroken(cid,1)
+			end
+		elseif diff > curLength*beamDeformThreshold and diff > beamDeformMin then
+			beamsToUpdate[cid] = {
+				oldLength = curLength,
+				newLength = cachedLength,
+				progress = 0
 			}
 		end
 	end
+	
+	print("Resync beams for vehicle "..obj:getID())
+	
+	lastDamage = beamstate.damage
 end
 
 
 
 local function updateGFX(dt)
-	for cid, beam in pairs(receivedBeams) do
-		local currentLen = obj:getBeamRestLength(cid)
-		local dif = beam.length - currentLen
-		local rate = beam.rate*dt
+	updatingBeams = false
+	for cid, beam in pairs(beamsToUpdate) do
 		
-		if abs(dif) > 0.01 then
-			local length = currentLen + min(max(dif, -rate), rate)
+		if beam.progress < 1 then
+			beam.progress = min(beam.progress + dt/beamApplyTime, 1)
+			local length = lerp(beam.oldLength, beam.newLength, beam.progress)
 			obj:setBeamLength(cid, length)
+			
+			updatingBeams = true
 		else
-			receivedBeams[cid] = nil
+			beamsToUpdate[cid] = nil
 		end
 	end
 end
@@ -162,6 +226,7 @@ M.onExtensionLoaded  = onInit
 M.onReset            = onReset
 M.applyBeams         = applyBeams
 M.getBeams           = getBeams
+M.resyncBeams        = resyncBeams
 M.updateGFX          = updateGFX
 
 

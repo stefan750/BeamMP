@@ -16,25 +16,38 @@ print("Loading nodesGE...")
 
 
 local function tick()
-	local ownMap = MPVehicleGE.getOwnMap() -- Get map of own vehicles
-	for i,v in pairs(ownMap) do -- For each own vehicle
-		local veh = be:getObjectByID(i) -- Get vehicle
-		if veh then
+	if not settings.getValue("damageSync") then
+		return
+	end
+	
+	for k, veh in ipairs(getAllVehicles()) do
+		local vehId = veh:getId()
+		if MPVehicleGE.isOwn(vehId) then
 			veh:queueLuaCommand("nodesVE.getBeams()")
+		else
+			veh:queueLuaCommand("nodesVE.resyncBeams()")
 		end
 	end
 end
 
 local function sendBeams(data, gameVehicleID) -- Update electrics values of all vehicles - The server check if the player own the vehicle itself
+	if not settings.getValue("damageSync") then
+		return
+	end
+	
 	if MPGameNetwork.connectionStatus() == 1 then -- If TCP connected
 		local serverVehicleID = MPVehicleGE.getServerVehicleID(gameVehicleID) -- Get serverVehicleID
 		if serverVehicleID and MPVehicleGE.isOwn(gameVehicleID) then -- If serverVehicleID not null and player own vehicle
-			MPGameNetwork.send("Xn:"..serverVehicleID..":"..data)
+			MPGameNetwork.send("Gn:"..serverVehicleID..":"..data)
 		end
 	end
 end
 
 local function applyBeams(data, serverVehicleID)
+	if not settings.getValue("damageSync") then
+		return
+	end
+	
 	local gameVehicleID = MPVehicleGE.getGameVehicleID(serverVehicleID) or -1 -- get gameID
 	local veh = be:getObjectByID(gameVehicleID)
 	if veh then
@@ -43,12 +56,8 @@ local function applyBeams(data, serverVehicleID)
 end
 
 local function handle(rawData)
-	--print("nodesGE.handle: "..rawData)
-	local code = string.sub(rawData, 1, 1)
+	local code, serverVehicleID, data = string.match(rawData, "^(%a)%:(%d+%-%d+)%:({.*})")
 	if code == "n" then
-		rawData = string.sub(rawData,3)
-		local serverVehicleID = string.match(rawData,"(%w+)%:")
-		local data = string.match(rawData,":(.*)")
 		applyBeams(data, serverVehicleID)
 	end
 end

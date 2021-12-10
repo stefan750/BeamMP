@@ -171,7 +171,7 @@ end
 local HandleNetwork = {
 	['V'] = function(params) MPInputsGE.handle(params) end,
 	['W'] = function(params) MPElectricsGE.handle(params) end,
-	['X'] = function(params) nodesGE.handle(params) end,
+	['G'] = function(params) nodesGE.handle(params) end,
 	['Y'] = function(params) MPPowertrainGE.handle(params) end,
 	['Z'] = function(params) positionGE.handle(params) end,
 	['O'] = function(params) MPVehicleGE.handle(params) end,
