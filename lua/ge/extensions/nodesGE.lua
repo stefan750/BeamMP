@@ -14,23 +14,30 @@ local M = {}
 
 --- Called on specified interval by MPUpdatesGE to simulate our own tick event to collect data.
 local function tick()
-	local ownMap = MPVehicleGE.getOwnMap()
-	for i,v in pairs(ownMap) do
-		local veh = be:getObjectByID(i)
-		if veh then
-			--veh:queueLuaCommand("nodesVE.getNodes()")
-			--veh:queueLuaCommand("nodesVE.getBreakGroups()")
+	if not settings.getValue("damageSync") then
+		return
+	end
+	
+	for k, veh in ipairs(getAllVehicles()) do
+		local vehId = veh:getId()
+		if MPVehicleGE.isOwn(vehId) then
 			veh:queueLuaCommand("nodesVE.getBeams()")
+		else
+			veh:queueLuaCommand("nodesVE.resyncBeams()")
 		end
 	end
 end
 
 
 local function sendBeams(data, gameVehicleID) -- Update electrics values of all vehicles - The server check if the player own the vehicle itself
+	if not settings.getValue("damageSync") then
+		return
+	end
+	
 	if MPGameNetwork.launcherConnected() then -- If TCP connected
 		local serverVehicleID = MPVehicleGE.getServerVehicleID(gameVehicleID) -- Get serverVehicleID
 		if serverVehicleID and MPVehicleGE.isOwn(gameVehicleID) then -- If serverVehicleID not null and player own vehicle
-			MPGameNetwork.send("Xn:"..serverVehicleID..":"..data)
+			MPGameNetwork.send("Gn:"..serverVehicleID..":"..data)
 		end
 	end
 end
@@ -78,6 +85,10 @@ end
 
 
 local function applyBeams(data, serverVehicleID)
+	if not settings.getValue("damageSync") then
+		return
+	end
+	
 	local gameVehicleID = MPVehicleGE.getGameVehicleID(serverVehicleID) or -1 -- get gameID
 	local veh = be:getObjectByID(gameVehicleID)
 	if veh then
