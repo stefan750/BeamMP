@@ -71,6 +71,12 @@
   <md-checkbox ng-model="options.data.values.enablePosSmoother" ng-change="options.applyState()"></md-checkbox>
 </md-list-item>
 
+<md-list-item md-no-ink ng-show="options.data.values.showAdvancedMPOptions">
+    <p><span style="color: coral; font-weight: bold;">EXPERIMENTAL</span> Enable damage sync (may cause performance issues!)</p>
+    <md-tooltip md-direction="right">Sync visual vehicle damage. Both players need to have this option enabled for it to work!</md-tooltip>
+    <md-checkbox ng-model="options.data.values.damageSync" ng-change="options.applyState()"></md-checkbox>
+</md-list-item>
+
 <md-list-item md-no-ink>
   <p>{{:: 'ui.options.multiplayer.skipModSecurityWarning' | translate }}</p>
   <md-tooltip md-direction="right">{{:: 'ui.options.multiplayer.skipModSecurityWarning.tooltip' | translate }}</md-tooltip>
@@ -120,7 +126,6 @@
     <span ng-if="options.data.values.uiUnitLength != 'imperial'" style="margin-left:15px">{{
       (options.data.values.queueApplySpeed*3.6).toFixed(1) }} km/h</span>
     <span style="margin-left:5px">({{ (options.data.values.queueApplySpeed).toFixed(0) }} m/s)</span>
-
   </md-list-item>
 
   <md-list-item md-no-ink>
