@@ -24,7 +24,6 @@ local beamApplyTime = 0.5          -- How quickly the damage will be applied (s)
 local beamCache = {}
 local brokenBreakGroups = {}
 local beamsToUpdate = {}
-local updatingBeams = false
 local lastDamage = 0
 -- ============= VARIABLES =============
 
@@ -79,7 +78,7 @@ end
 
 
 local function getBeams()
-	if updatingBeams or (abs(beamstate.damage - lastDamage) < damageThreshold) then
+	if abs(beamstate.damage - lastDamage) < damageThreshold then
 		return
 	end
 	
@@ -174,7 +173,7 @@ end
 
 
 local function resyncBeams()
-	if updatingBeams or (abs(beamstate.damage - lastDamage) < damageThreshold) then
+	if abs(beamstate.damage - lastDamage) < damageThreshold then
 		return
 	end
 	
@@ -204,9 +203,8 @@ end
 
 
 local function updateGFX(dt)
-	updatingBeams = false
+	local updatingBeams = false
 	for cid, beam in pairs(beamsToUpdate) do
-		
 		if beam.progress < 1 then
 			beam.progress = min(beam.progress + dt/beamApplyTime, 1)
 			local length = lerp(beam.oldLength, beam.newLength, beam.progress)
@@ -216,6 +214,10 @@ local function updateGFX(dt)
 		else
 			beamsToUpdate[cid] = nil
 		end
+	end
+	
+	if updatingBeams then
+		lastDamage = beamstate.damage
 	end
 end
 
