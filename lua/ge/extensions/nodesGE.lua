@@ -20,9 +20,9 @@ local function tick()
 		return
 	end
 	
-	for k, veh in ipairs(getAllVehicles()) do
-		local vehId = veh:getId()
-		if MPVehicleGE.isOwn(vehId) then
+	for k, v in ipairs(getAllVehicles()) do
+		local vehId = v:getId()
+		if isOwn(vehId) then
 			veh:queueLuaCommand("nodesVE.getBeams()")
 		else
 			veh:queueLuaCommand("nodesVE.resyncBeams()")

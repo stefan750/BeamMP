@@ -23,6 +23,12 @@
   </md-list-item>
 
   <md-list-item md-no-ink>
+    <p><span style="color: coral; font-weight: bold;">EXPERIMENTAL</span> Enable damage sync (may cause performance issues!)</p>
+    <md-tooltip md-direction="right">Sync visual vehicle damage. Both players need to have this option enabled for it to work!</md-tooltip>
+    <md-checkbox ng-model="options.data.values.damageSync" ng-change="options.applyState()"></md-checkbox>
+  </md-list-item>
+
+  <md-list-item md-no-ink>
     <p>{{:: 'ui.options.multiplayer.queueSpawnEdit' | translate }}</p>
     <md-tooltip md-direction="right">{{:: 'ui.options.multiplayer.queueSpawnEdit.tooltip' | translate }}</md-tooltip>
     <md-checkbox ng-model="options.data.values.enableSpawnQueue" ng-change="options.applyState()"></md-checkbox>
