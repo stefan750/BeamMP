@@ -2,7 +2,7 @@
 -- All work by jojos38 & Titch2000 & stefan750.
 -- You have no permission to edit, redistribute or upload. Contact BeamMP for more info!
 --====================================================================================
--- Node sync related test functions
+-- Visual vehicle damage sync
 --====================================================================================
 
 local M = {}
@@ -43,14 +43,13 @@ local function onInit()
 		-- exclude BEAM_PRESSURED, BEAM_LBEAM, BEAM_HYDRO, BEAM_SUPPORT, and beams that can not deform or break
 		if beam.beamType ~= 3 and beam.beamType ~= 4 and beam.beamType ~= 6 and beam.beamType ~= 7
 		   and (beam.beamDeform < math.huge or beam.beamStrength < math.huge) then
-			beamCache[beam.cid] = obj:beamIsBroken(beam.cid) and -1 or obj:getBeamRestLength(beam.cid)*(beam.beamPrecompression or 1)
+			beamCache[beam.cid] = obj:beamIsBroken(beam.cid) and -1 or obj:getBeamRestLength(beam.cid)*((beam.beamPrecompressionTime or 0) > 0 and beam.beamPrecompression or 1)
 			beamCount = beamCount+1
 		end
 	end
 	
 	brokenBreakGroups = {}
 	beamsToUpdate = {}
-	updatingBeams = false
 	
 	lastDamage = 0
 	
@@ -63,12 +62,12 @@ end
 local function onReset()
 	-- Update cached beams on reset so we dont send everything again, other vehicle should receive reset event anyways
 	for cid, cachedLength in pairs(beamCache) do
-		beamCache[cid] = obj:beamIsBroken(cid) and -1 or obj:getBeamRestLength(cid)*(v.data.beams[cid].beamPrecompression or 1)
+		local beam = v.data.beams[cid]
+		beamCache[cid] = obj:beamIsBroken(cid) and -1 or obj:getBeamRestLength(cid)*((beam.beamPrecompressionTime or 0) > 0 and beam.beamPrecompression or 1)
 	end
 	
 	brokenBreakGroups = {}
 	beamsToUpdate = {}
-	updatingBeams = false
 	
 	lastDamage = 0
 	
@@ -77,7 +76,9 @@ end
 
 
 
+-- Compare all beams with cache and send any changes to server
 local function getBeams()
+	-- Skip if beamstate.damage has not changed
 	if abs(beamstate.damage - lastDamage) < damageThreshold then
 		return
 	end
@@ -94,6 +95,7 @@ local function getBeams()
 			if obj:beamIsBroken(cid) then
 				beamCache[cid] = -1
 				
+				-- Only one beam per breakgroup is needed, the other ones will break automatically
 				local breakGroup = v.data.beams[cid].breakGroup
 				if not breakGroup or not brokenBreakGroups[breakGroup] then
 					beams[cid] = -1
@@ -146,23 +148,23 @@ local function applyBeams(data)
 		-- JSON keys are always strings, so we need to convert it back to a number
 		local cid = tonumber(cidStr)
 		
-		if length < 0 then
-			if not obj:beamIsBroken(cid) then
-				obj:breakBeam(cid)
-				beamstate.beamBroken(cid,1)
+		-- Ignore beam if it isn't in the cache
+		if beamCache[cid] then
+			if length < 0 then
+				if not obj:beamIsBroken(cid) then
+					obj:breakBeam(cid)
+					beamstate.beamBroken(cid,1)
+				end
+			else
+				local curLength = obj:getBeamRestLength(cid)
+
+				beamsToUpdate[cid] = {
+					oldLength = curLength,
+					newLength = length,
+					progress = 0
+				}
 			end
-		else
-			local curLength = obj:getBeamRestLength(cid)
-		
-			beamsToUpdate[cid] = {
-				oldLength = curLength,
-				newLength = length,
-				progress = 0
-			}
-		end
-		
-		-- Do not add cids to the cache that we don't already have (breaks reset)
-		if beamCache[cid] > 0 then
+			
 			beamCache[cid] = length
 		end
 	end
@@ -172,7 +174,9 @@ end
 
 
 
+-- Compare all beams with the cache and correct if necessary
 local function resyncBeams()
+	-- Skip if beamstate.damage has not changed
 	if abs(beamstate.damage - lastDamage) < damageThreshold then
 		return
 	end
@@ -205,6 +209,7 @@ end
 local function updateGFX(dt)
 	local updatingBeams = false
 	for cid, beam in pairs(beamsToUpdate) do
+		-- Interpolate beam length
 		if beam.progress < 1 then
 			beam.progress = min(beam.progress + dt/beamApplyTime, 1)
 			local length = lerp(beam.oldLength, beam.newLength, beam.progress)
