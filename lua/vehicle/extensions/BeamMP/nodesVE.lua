@@ -10,7 +10,7 @@ local max = math.max
 
 
 
-local damageThreshold = 1          -- How much the beamstate.damage value needs to change before syncing
+local damageThreshold = 100        -- How much the beamstate.damage value needs to change before syncing
 local beamDeformThreshold = 0.02   -- Relative length change after which a beam will be synced, 0.02 means length change by 2%
 local beamDeformMin = 0.01         -- Total length change after which a beam will be synced (m), 0.01 means length change by 1cm
 local beamApplyTime = 0.5          -- How quickly the damage will be applied (s), 1 means incoming damage will be interpolated over 1 second
@@ -19,6 +19,8 @@ local beamApplyTime = 0.5          -- How quickly the damage will be applied (s)
 
 -- ============= VARIABLES =============
 local beamCache = {}
+local beamNameLookup = {}
+local beamIdLookup = {}
 local brokenBreakGroups = {}
 local beamsToUpdate = {}
 local lastDamage = 0
@@ -37,12 +39,26 @@ end
 
 local function onInit()
 	beamCache = {}
+	beamNameLookup = {}
+	beamIdLookup = {}
 	local beamCount = 0
 	for _, beam in pairs(v.data.beams) do
 		-- exclude BEAM_PRESSURED, BEAM_LBEAM, BEAM_HYDRO, BEAM_SUPPORT, and beams that can not deform or break
 		if beam.beamType ~= 3 and beam.beamType ~= 4 and beam.beamType ~= 6 and beam.beamType ~= 7
 		   and (beam.beamDeform < math.huge or beam.beamStrength < math.huge) then
 			beamCache[beam.cid] = obj:beamIsBroken(beam.cid) and -1 or obj:getBeamRestLength(beam.cid)*((beam.beamPrecompressionTime or 0) > 0 and beam.beamPrecompression or 1)
+			
+			local node1 = v.data.nodes[beam.id1]
+			local node2 = v.data.nodes[beam.id2]
+			
+			local node1Name = node1 and node1.name or beam.id1
+			local node2Name = node2 and node2.name or beam.id2
+			
+			local beamName = node1Name.."-"..node2Name
+			
+			beamNameLookup[beam.cid] = beamName
+			beamIdLookup[beamName] = beam.cid
+			
 			beamCount = beamCount+1
 		end
 	end
@@ -97,7 +113,7 @@ local function getBeams()
 				-- Only one beam per breakgroup is needed, the other ones will break automatically
 				local breakGroup = v.data.beams[cid].breakGroup
 				if not breakGroup or not brokenBreakGroups[breakGroup] then
-					beams[cid] = -1
+					beams[beamNameLookup[cid]] = -1
 					beamCount = beamCount+1
 					send = true
 					
@@ -110,7 +126,7 @@ local function getBeams()
 				local diff = abs(curLength - cachedLength)
 				
 				if diff > curLength*beamDeformThreshold and diff > beamDeformMin then
-					beams[cid] = round(curLength, 4)
+					beams[beamNameLookup[cid]] = round(curLength, 4)
 					beamCount = beamCount+1
 					beamCache[cid] = curLength
 					send = true
@@ -143,17 +159,13 @@ end
 local function applyBeams(data)
 	local beams = jsonDecode(data)
 
-	for cidStr, length in pairs(beams) do
-		-- JSON keys are always strings, so we need to convert it back to a number
-		local cid = tonumber(cidStr)
+	for beamName, length in pairs(beams) do
+		local cid = beamIdLookup[beamName]
 		
 		-- Ignore beam if it isn't in the cache
-		if beamCache[cid] then
+		if cid ~= nil and beamCache[cid] then
 			if length < 0 then
-				if not obj:beamIsBroken(cid) then
-					obj:breakBeam(cid)
-					beamstate.beamBroken(cid,1)
-				end
+				obj:breakBeam(cid)
 			else
 				local curLength = obj:getBeamRestLength(cid)
 
@@ -165,6 +177,8 @@ local function applyBeams(data)
 			end
 			
 			beamCache[cid] = length
+		else
+			--print("Received invalid beam "..beamName.." for vehicle "..obj:getID())
 		end
 	end
 	
