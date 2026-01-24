@@ -72,7 +72,10 @@ local function onInit()
 	print("Cached "..beamCount.." beams for vehicle "..obj:getID())
 end
 
-
+local function onBreakGroupBroken(g)
+	justBrokenBreakGroups[g] = true
+	propsfunction(g)
+end
 
 local function onReset()
 	-- Update cached beams on reset so we dont send everything again, other vehicle should receive reset event anyways
@@ -87,6 +90,11 @@ local function onReset()
 	lastDamage = 0
 	
 	print("Reset beam cache for vehicle "..obj:getID())
+
+	if props.hidePropsInBreakGroup ~= onBreakGroupBroken then
+		propsfunction = props.hidePropsInBreakGroup
+		props.hidePropsInBreakGroup = onBreakGroupBroken
+	end
 end
 
 
@@ -244,19 +252,6 @@ local function getBreakGroups()
 
 	obj:queueGameEngineLua("nodesGE.sendBreakGroups(\'"..jsonEncode(breakGroupArray).."\', "..obj:getID()..")") -- Send it to GE lua
 end
-
-local function onBreakGroupBroken(g)
-	justBrokenBreakGroups[g] = true
-	propsfunction(g)
-end
-
-local function onReset()
-	if props.hidePropsInBreakGroup ~= onBreakGroupBroken then
-		propsfunction = props.hidePropsInBreakGroup
-		props.hidePropsInBreakGroup = onBreakGroupBroken
-	end
-end
-
 
 local function updateGFX(dt)
 	local updatingBeams = false
