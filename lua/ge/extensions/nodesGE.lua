@@ -21,9 +21,10 @@ local function tick()
 	for k, v in ipairs(getAllVehicles()) do
 		local vehId = v:getId()
 		if isOwn(vehId) then
-			veh:queueLuaCommand("nodesVE.getBeams()")
+			--veh:queueLuaCommand("nodesVE.getBreakGroups()")
+			v:queueLuaCommand("nodesVE.getBeams()")
 		else
-			veh:queueLuaCommand("nodesVE.resyncBeams()")
+			v:queueLuaCommand("nodesVE.resyncBeams()")
 		end
 	end
 end
