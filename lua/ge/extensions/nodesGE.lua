@@ -37,7 +37,7 @@ local function sendBeams(data, gameVehicleID) -- Update electrics values of all 
 	if MPGameNetwork.launcherConnected() then -- If TCP connected
 		local serverVehicleID = MPVehicleGE.getServerVehicleID(gameVehicleID) -- Get serverVehicleID
 		if serverVehicleID and MPVehicleGE.isOwn(gameVehicleID) then -- If serverVehicleID not null and player own vehicle
-			MPGameNetwork.send("Gn:"..serverVehicleID..":"..data)
+			MPGameNetwork.send("Xn:"..serverVehicleID..":"..data)
 		end
 	end
 end
